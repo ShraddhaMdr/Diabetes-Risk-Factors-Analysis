@@ -6,6 +6,8 @@
 
 ## Project Summary  
 This repository presents a case study to **predict diabetes status** using **lifestyle**, **health**, and **socio-economic** indicators from the **BRFSS 2015** dataset. Three models (Logistic Regression, Random Forest, LDA) are compared on metrics like accuracy, precision, recall, F1, and ROC-AUC.
+**Live report (GitHub Pages):**  
+https://shraddhamdr.github.io/Diabetes-Risk-Factors-Analysis/CaseStudyAssignment3.html
 
 ## Files & Structure
 
