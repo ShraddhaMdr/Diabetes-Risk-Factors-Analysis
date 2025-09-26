@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)  
 [![Made with R](https://img.shields.io/badge/Made%20with-R-blue)](https://www.r-project.org/)
 
-## 📖 Project Summary  
+## Project Summary  
 This repository presents a case study to **predict diabetes status** using **lifestyle**, **health**, and **socio-economic** indicators from the **BRFSS 2015** dataset. Three models (Logistic Regression, Random Forest, LDA) are compared on metrics like accuracy, precision, recall, F1, and ROC-AUC.
 
 ## Files & Structure
