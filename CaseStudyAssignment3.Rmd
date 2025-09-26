@@ -1,0 +1,614 @@
+---
+title: "Case_update"
+author: "Shraddha"
+date: "2025-08-11"
+output: html_document
+---
+
+```{r}
+set.seed(20250811)
+
+# install.packages(c("pROC","randomForest","MASS"))  # only if missing
+library(pROC)
+library(randomForest)
+library(MASS)
+
+```
+
+```{r}
+csv_path <- "diabetes_binary_5050split_health_indicators_BRFSS2015.csv"
+df <- read.csv(csv_path)
+
+binary_cols <- c(
+  "Diabetes_binary","HighBP","HighChol","CholCheck","Smoker","Stroke",
+  "HeartDiseaseorAttack","PhysActivity","Fruits","Veggies",
+  "HvyAlcoholConsump","AnyHealthcare","NoDocbcCost","DiffWalk","Sex"
+)
+df[binary_cols] <- lapply(df[binary_cols], factor)
+
+df$GenHlth   <- factor(df$GenHlth,   ordered = TRUE, levels = sort(unique(df$GenHlth)))
+df$Education <- factor(df$Education, ordered = TRUE, levels = sort(unique(df$Education)))
+df$Income    <- factor(df$Income,    ordered = TRUE, levels = sort(unique(df$Income)))
+df$Age       <- factor(df$Age,       ordered = TRUE, levels = sort(unique(df$Age)))
+
+df$Diabetes_binary <- factor(df$Diabetes_binary, levels = c(0,1), labels = c("no","yes"))
+
+cat("\nOutcome distribution:\n"); print(prop.table(table(df$Diabetes_binary)))
+stopifnot(all(c("BMI","MentHlth","PhysHlth") %in% names(df)))
+
+```
+
+
+```{r}
+strat_split <- function(data, prop = 0.7, y = "Diabetes_binary") {
+  idx_yes <- which(data[[y]] == "yes")
+  idx_no  <- which(data[[y]] == "no")
+  n_yes   <- floor(length(idx_yes) * prop)
+  n_no    <- floor(length(idx_no)  * prop)
+  tr_idx  <- c(sample(idx_yes, n_yes), sample(idx_no, n_no))
+  tr_idx  <- sample(tr_idx)
+  list(train = data[tr_idx, , drop = FALSE],
+       test  = data[-tr_idx, , drop = FALSE])
+}
+set.seed(20250811)
+spl <- strat_split(df, prop = 0.70, y = "Diabetes_binary")
+train <- droplevels(spl$train)
+test  <- droplevels(spl$test)
+
+if (length(unique(test$Diabetes_binary)) < 2) {  # ensure both classes present
+  set.seed(20250811 + 1)
+  spl <- strat_split(df, prop = 0.70, y = "Diabetes_binary")
+  train <- droplevels(spl$train)
+  test  <- droplevels(spl$test)
+}
+
+cat("\nTest outcome distribution:\n"); print(table(test$Diabetes_binary))
+
+# Persist to disk (optional but helpful if R restarts)
+saveRDS(train, "train.rds"); saveRDS(test, "test.rds")
+
+```
+
+
+```{r}
+train <- readRDS("train.rds"); test <- readRDS("test.rds")
+glm_formula <- Diabetes_binary ~ .
+
+# Logistic
+log_fit <- glm(glm_formula, data = train, family = binomial(link = "logit"))
+
+# Random Forest (smaller trees for speed; increase later)
+p_all <- ncol(train) - 1
+mtry_val <- max(2, floor(sqrt(p_all)))
+rf_fit <- randomForest(glm_formula, data = train, ntree = 300, mtry = mtry_val,
+                       importance = TRUE, na.action = na.omit)
+
+# LDA (requires numeric matrix)
+mm_formula <- ~ . - Diabetes_binary
+x_train_mm <- model.matrix(mm_formula, data = train)[, -1, drop = FALSE]
+x_test_mm  <- model.matrix(mm_formula, data = test)[,  -1, drop = FALSE]
+nzv <- which(apply(x_train_mm, 2, function(z) length(unique(z)) > 1))
+x_train_mm <- x_train_mm[, nzv, drop = FALSE]
+x_test_mm  <- x_test_mm[,  intersect(colnames(x_train_mm), colnames(x_test_mm)), drop = FALSE]
+x_test_mm  <- x_test_mm[, colnames(x_train_mm), drop = FALSE]
+cs <- colMeans(x_train_mm); ss <- apply(x_train_mm, 2, sd); ss[ss==0] <- 1
+x_train_lda <- scale(x_train_mm, center = cs, scale = ss)
+x_test_lda  <- scale(x_test_mm,  center = cs, scale = ss)
+lda_fit <- lda(x = x_train_lda, grouping = train$Diabetes_binary)
+
+saveRDS(list(log_fit=log_fit, rf_fit=rf_fit, lda_fit=lda_fit,
+             cs=cs, ss=ss, nzv=nzv, cols=colnames(x_train_mm)),
+        "models_quick.rds")
+
+```
+
+
+
+```{r}
+models <- readRDS("models_quick.rds")
+log_fit <- models$log_fit; rf_fit <- models$rf_fit; lda_fit <- models$lda_fit
+cs <- models$cs; ss <- models$ss; cols <- models$cols
+
+# Rebuild LDA test matrix aligned (safe if you ran earlier)
+x_test_mm  <- model.matrix(~ . - Diabetes_binary, data = test)[, -1, drop = FALSE]
+x_test_mm  <- x_test_mm[, intersect(cols, colnames(x_test_mm)), drop = FALSE]
+x_test_mm  <- x_test_mm[, cols, drop = FALSE]
+x_test_lda <- scale(x_test_mm, center = cs, scale = ss)
+
+# Helper metrics
+bin_metrics <- function(truth, prob_yes, pred_class) {
+  truth <- factor(truth, levels = c("no","yes"))
+  pred_class <- factor(pred_class, levels = c("no","yes"))
+  cm <- table(Predicted = pred_class, Actual = truth)
+  TP <- cm["yes","yes"]; TN <- cm["no","no"]; FP <- cm["yes","no"]; FN <- cm["no","yes"]
+  accuracy  <- (TP + TN) / sum(cm)
+  precision <- if ((TP + FP) > 0) TP / (TP + FP) else NA_real_
+  recall    <- if ((TP + FN) > 0) TP / (TP + FN) else NA_real_
+  f1        <- if (!is.na(precision) && !is.na(recall) && (precision + recall) > 0) {
+    2 * precision * recall / (precision + recall)
+  } else NA_real_
+  roc_obj <- tryCatch(pROC::roc(truth, as.numeric(prob_yes),
+                                levels = c("no","yes"), direction = "<", quiet = TRUE),
+                      error = function(e) NULL)
+  auc_val <- if (is.null(roc_obj)) NA_real_ else as.numeric(pROC::auc(roc_obj))
+  list(cm=cm, accuracy=accuracy, precision=precision, recall=recall, f1=f1, auc=auc_val)
+}
+
+y_test <- test$Diabetes_binary
+
+# Logistic
+log_prob <- as.numeric(predict(log_fit, newdata = test, type = "response"))
+log_pred <- ifelse(log_prob > 0.5, "yes", "no")
+log_mets <- bin_metrics(y_test, log_prob, log_pred)
+
+# RF
+rf_prob <- as.numeric(predict(rf_fit, newdata = test, type = "prob")[,"yes"])
+rf_pred <- predict(rf_fit, newdata = test, type = "response")
+rf_mets <- bin_metrics(y_test, rf_prob, rf_pred)
+
+# LDA
+lda_pred_obj <- predict(lda_fit, newdata = x_test_lda)
+lda_prob <- as.numeric(lda_pred_obj$posterior[,"yes"])
+lda_pred <- lda_pred_obj$class
+lda_mets <- bin_metrics(y_test, lda_prob, lda_pred)
+
+cat("\n=== Test Metrics: Logistic ===\n"); print(log_mets[c("cm","accuracy","precision","recall","f1")]); cat("AUC:", log_mets$auc, "\n")
+cat("\n=== Test Metrics: LDA ===\n");      print(lda_mets[c("cm","accuracy","precision","recall","f1")]); cat("AUC:", lda_mets$auc, "\n")
+cat("\n=== Test Metrics: RF ===\n");       print(rf_mets[c("cm","accuracy","precision","recall","f1")]); cat("AUC:", rf_mets$auc, "\n")
+
+summ_test <- data.frame(
+  Model    = c("Logistic","LDA","Random Forest"),
+  Accuracy = c(log_mets$accuracy, lda_mets$accuracy, rf_mets$accuracy),
+  F1       = c(log_mets$f1,       lda_mets$f1,       rf_mets$f1),
+  ROC_AUC  = c(log_mets$auc,      lda_mets$auc,      rf_mets$auc)
+)
+
+summ_test[ , -1] <- round(summ_test[ , -1], 4)  # round everything except Model
+cat("\n===== Test-set summary =====\n"); print(summ_test)
+
+
+```
+
+
+```{r}
+# Logistic: Odds ratios + Wald CI
+co <- coef(summary(log_fit))
+OR  <- exp(coef(log_fit))
+SE  <- co[, "Std. Error"]
+lower <- exp(coef(log_fit) - 1.96 * SE)
+upper <- exp(coef(log_fit) + 1.96 * SE)
+log_or <- data.frame(term = names(OR), OR = OR, CI_low = lower, CI_high = upper)
+log_or <- log_or[order(-abs(log_or$OR - 1)), ]
+cat("\nTop 15 Odds Ratios (Wald CI):\n")
+print(head(log_or, 15), row.names = FALSE)
+
+# RF: Importance (top 15)
+rf_imp <- importance(rf_fit, type = 2)[,1]
+rf_imp <- sort(rf_imp, decreasing = TRUE)
+cat("\nTop 15 Feature Importances (RF, MeanDecreaseGini):\n")
+print(head(rf_imp, 15))
+
+# LDA: Loadings
+lda_load <- data.frame(feature = rownames(lda_fit$scaling),
+                       LD1 = lda_fit$scaling[,1], row.names = NULL)
+lda_load <- lda_load[order(-abs(lda_load$LD1)), ]
+cat("\nTop 15 LDA loadings (|LD1|):\n")
+print(head(lda_load, 15), row.names = FALSE)
+
+```
+
+
+```{r}
+# Helper: make K-fold indices (stratified)
+kfold_indices <- function(y, k = 10) {
+  y <- factor(y, levels = c("no","yes"))
+  idx_no  <- which(y == "no");  idx_yes <- which(y == "yes")
+  folds_no  <- split(sample(idx_no),  rep(1:k, length.out = length(idx_no)))
+  folds_yes <- split(sample(idx_yes), rep(1:k, length.out = length(idx_yes)))
+  Map(function(a,b) c(a,b), folds_no, folds_yes)
+}
+bin_metrics <- function(truth, prob_yes, pred_class) {
+  truth <- factor(truth, levels = c("no","yes"))
+  pred_class <- factor(pred_class, levels = c("no","yes"))
+  cm <- table(Predicted = pred_class, Actual = truth)
+  TP <- cm["yes","yes"]; TN <- cm["no","no"]; FP <- cm["yes","no"]; FN <- cm["no","yes"]
+  accuracy  <- (TP + TN) / sum(cm)
+  precision <- if ((TP + FP) > 0) TP / (TP + FP) else NA_real_
+  recall    <- if ((TP + FN) > 0) TP / (TP + FN) else NA_real_
+  f1        <- if (!is.na(precision) && !is.na(recall) && (precision + recall) > 0) {
+    2 * precision * recall / (precision + recall)
+  } else NA_real_
+  roc_obj <- tryCatch(pROC::roc(truth, as.numeric(prob_yes),
+                                levels = c("no","yes"), direction = "<", quiet = TRUE),
+                      error = function(e) NULL)
+  auc_val <- if (is.null(roc_obj)) NA_real_ else as.numeric(pROC::auc(roc_obj))
+  c(accuracy=accuracy, precision=precision, recall=recall, f1=f1, roc_auc=auc_val)
+}
+set.seed(20250811)
+k <- 10
+folds <- kfold_indices(train$Diabetes_binary, k)
+
+# ---- Choose one model at a time by toggling which block you run ----
+
+## (A) Logistic CV
+glm_formula <- Diabetes_binary ~ .
+cv_log <- replicate(k, NA_real_)
+mets <- matrix(NA_real_, nrow = k, ncol = 5,
+               dimnames = list(NULL, c("accuracy","precision","recall","f1","roc_auc")))
+for (i in seq_len(k)) {
+  te_idx <- folds[[i]]; tr_idx <- setdiff(seq_len(nrow(train)), te_idx)
+  tr <- train[tr_idx,]; te <- train[te_idx,]
+  fit <- glm(glm_formula, data = tr, family = binomial)
+  pr  <- as.numeric(predict(fit, newdata = te, type = "response"))
+  pc  <- ifelse(pr > 0.5, "yes", "no")
+  mets[i,] <- bin_metrics(te$Diabetes_binary, pr, pc)
+}
+cat("\nLogistic 10-fold CV (mean):\n"); print(colMeans(mets, na.rm = TRUE))
+
+## (B) Random Forest CV (smaller ntree for speed)
+# mets <- matrix(NA_real_, nrow = k, ncol = 5,
+#                dimnames = list(NULL, c("accuracy","precision","recall","f1","roc_auc")))
+# p_all <- ncol(train) - 1; mtry_val <- max(2, floor(sqrt(p_all)))
+# for (i in seq_len(k)) {
+#   te_idx <- folds[[i]]; tr_idx <- setdiff(seq_len(nrow(train)), te_idx)
+#   tr <- train[tr_idx,]; te <- train[te_idx,]
+#   fit <- randomForest(Diabetes_binary ~ ., data = tr, ntree = 300, mtry = mtry_val,
+#                       importance = FALSE, na.action = na.omit)
+#   pr  <- as.numeric(predict(fit, newdata = te, type = "prob")[,"yes"])
+#   pc  <- predict(fit, newdata = te, type = "response")
+#   mets[i,] <- bin_metrics(te$Diabetes_binary, pr, pc)
+# }
+# cat("\nRF 10-fold CV (mean):\n"); print(colMeans(mets, na.rm = TRUE))
+
+## (C) LDA CV
+# mets <- matrix(NA_real_, nrow = k, ncol = 5,
+#                dimnames = list(NULL, c("accuracy","precision","recall","f1","roc_auc")))
+# for (i in seq_len(k)) {
+#   te_idx <- folds[[i]]; tr_idx <- setdiff(seq_len(nrow(train)), te_idx)
+#   tr <- train[tr_idx,]; te <- train[te_idx,]
+#   x_tr <- model.matrix(~ . - Diabetes_binary, data = tr)[, -1, drop = FALSE]
+#   x_te <- model.matrix(~ . - Diabetes_binary, data = te)[, -1, drop = FALSE]
+#   nzv  <- which(apply(x_tr, 2, function(z) length(unique(z)) > 1))
+#   x_tr <- x_tr[, nzv, drop = FALSE]
+#   x_te <- x_te[, intersect(colnames(x_tr), colnames(x_te)), drop = FALSE]
+#   x_te <- x_te[, colnames(x_tr), drop = FALSE]
+#   cs <- colMeans(x_tr); ss <- apply(x_tr, 2, sd); ss[ss==0] <- 1
+#   x_trs <- scale(x_tr, center = cs, scale = ss)
+#   x_tes <- scale(x_te, center = cs, scale = ss)
+#   fit <- lda(x = x_trs, grouping = tr$Diabetes_binary)
+#   pred <- predict(fit, newdata = x_tes)
+#   pr   <- as.numeric(pred$posterior[,"yes"])
+#   pc   <- pred$class
+#   mets[i,] <- bin_metrics(te$Diabetes_binary, pr, pc)
+# }
+# cat("\nLDA 10-fold CV (mean):\n"); print(colMeans(mets, na.rm = TRUE))
+
+```
+
+
+
+# Results — Key Outputs (friend-style additions)
+
+```{r results-preds, echo=FALSE, message=FALSE, warning=FALSE}
+# Ensure outcome and predicted probabilities exist for all three models
+suppressPackageStartupMessages({ library(pROC) })
+
+# Outcome vector for test set
+y_test <- if (exists("test")) test$Diabetes_binary else y_test
+
+# Logistic probabilities
+if (exists("log_fit") && exists("test") && !exists("log_prob")) {
+  log_prob <- as.numeric(predict(log_fit, newdata = test, type = "response"))
+  log_pred <- ifelse(log_prob > 0.5, "yes", "no")
+}
+
+# Random Forest probabilities
+if (exists("rf_fit") && exists("test") && !exists("rf_prob")) {
+  rf_prob <- as.numeric(predict(rf_fit, newdata = test, type = "prob")[,"yes"])
+  rf_pred <- predict(rf_fit, newdata = test, type = "response")
+}
+
+# LDA probabilities (uses x_test_lda if available; otherwise reconstructs quickly)
+if (exists("lda_fit") && !exists("lda_prob")) {
+  if (exists("x_test_lda")) {
+    lda_pred_obj <- predict(lda_fit, newdata = x_test_lda)
+  } else if (exists("test")) {
+    # minimal fallback
+    mm_formula <- ~ . - Diabetes_binary
+    x_test_mm <- model.matrix(mm_formula, data = test)[, -1, drop = FALSE]
+    # Try to align columns if training stats are saved
+    if (exists("cols") && exists("cs") && exists("ss")) {
+      x_test_mm <- x_test_mm[, intersect(cols, colnames(x_test_mm)), drop = FALSE]
+      x_test_mm <- x_test_mm[, cols, drop = FALSE]
+      x_test_lda <- scale(x_test_mm, center = cs, scale = ss)
+    } else {
+      # Best-effort scale
+      cs_local <- colMeans(x_test_mm); ss_local <- apply(x_test_mm, 2, sd); ss_local[ss_local==0] <- 1
+      x_test_lda <- scale(x_test_mm, center = cs_local, scale = ss_local)
+    }
+    lda_pred_obj <- predict(lda_fit, newdata = x_test_lda)
+  }
+  lda_prob <- as.numeric(lda_pred_obj$posterior[,"yes"])
+  lda_pred <- lda_pred_obj$class
+}
+```
+
+```{r test-table-friend, results='asis', echo=FALSE}
+# Build a clean test performance table; compute metrics if needed
+suppressPackageStartupMessages({ library(ggplot2) })
+
+acc_fn <- function(truth, pred) {
+  truth <- factor(truth, levels = c("no","yes"))
+  pred  <- factor(pred,  levels = c("no","yes"))
+  mean(truth == pred)
+}
+f1_fn <- function(truth, pred) {
+  truth <- factor(truth, levels = c("no","yes"))
+  pred  <- factor(pred,  levels = c("no","yes"))
+  tp <- sum(truth=="yes" & pred=="yes")
+  fp <- sum(truth=="no"  & pred=="yes")
+  fn <- sum(truth=="yes" & pred=="no")
+  precision <- if ((tp+fp)>0) tp/(tp+fp) else NA_real_
+  recall    <- if ((tp+fn)>0) tp/(tp+fn) else NA_real_
+  if (is.na(precision) || is.na(recall) || (precision+recall)==0) return(NA_real_)
+  2*precision*recall/(precision+recall)
+}
+
+# Derive class predictions if not present
+if (exists("log_prob") && !exists("log_pred")) log_pred <- ifelse(log_prob > 0.5, "yes", "no")
+if (exists("rf_prob")  && !exists("rf_pred"))  rf_pred  <- ifelse(rf_prob  > 0.5, "yes", "no")
+if (exists("lda_prob") && !exists("lda_pred")) lda_pred <- ifelse(lda_prob > 0.5, "yes", "no")
+
+# Compute numbers
+get_auc <- function(y, p) { 
+  if (!exists("y") || !exists("p")) return(NA_real_)
+  as.numeric(pROC::auc(pROC::roc(y, p, levels = c("no","yes"), direction = "<")))
+}
+
+acc_log <- if (exists("y_test") && exists("log_pred")) acc_fn(y_test, log_pred) else NA_real_
+acc_lda <- if (exists("y_test") && exists("lda_pred")) acc_fn(y_test, lda_pred) else NA_real_
+acc_rf  <- if (exists("y_test") && exists("rf_pred"))  acc_fn(y_test, rf_pred)  else NA_real_
+
+f1_log <- if (exists("y_test") && exists("log_pred")) f1_fn(y_test, log_pred) else NA_real_
+f1_lda <- if (exists("y_test") && exists("lda_pred")) f1_fn(y_test, lda_pred) else NA_real_
+f1_rf  <- if (exists("y_test") && exists("rf_pred"))  f1_fn(y_test, rf_pred)  else NA_real_
+
+auc_log <- if (exists("y_test") && exists("log_prob")) get_auc(y_test, log_prob) else NA_real_
+auc_lda <- if (exists("y_test") && exists("lda_prob")) get_auc(y_test, lda_prob) else NA_real_
+auc_rf  <- if (exists("y_test") && exists("rf_prob"))  get_auc(y_test, rf_prob)  else NA_real_
+
+summ_test <- data.frame(
+  Model    = c("Logistic","LDA","Random Forest"),
+  Accuracy = round(c(acc_log, acc_lda, acc_rf), 4),
+  F1       = round(c(f1_log,  f1_lda,  f1_rf),  4),
+  ROC_AUC  = round(c(auc_log, auc_lda, auc_rf), 4)
+)
+
+knitr::kable(summ_test, caption = "Test-set performance (Accuracy, F1, ROC-AUC)")
+```
+
+```{r accuracy-figure, fig.cap="Test set Accuracy by Model", echo=FALSE}
+library(ggplot2)
+ggplot(summ_test, aes(x = Model, y = Accuracy, fill = Model)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = sprintf("%.3f", Accuracy)), vjust = -0.5) +
+  ylim(0, 1) +
+  labs(title = "Test Set Accuracy by Model", y = "Accuracy", x = NULL) +
+  theme_minimal() + theme(legend.position = "none")
+```
+
+```{r roc-curves-friend, fig.cap="ROC curves for Logistic Regression, Random Forest, and LDA", echo=FALSE}
+if (exists("y_test") && exists("log_prob") && exists("rf_prob") && exists("lda_prob")) {
+  roc_log <- pROC::roc(y_test, log_prob, levels = c("no","yes"), direction = "<")
+  roc_rf  <- pROC::roc(y_test, rf_prob,  levels = c("no","yes"), direction = "<")
+  roc_lda <- pROC::roc(y_test, lda_prob, levels = c("no","yes"), direction = "<")
+  plot(roc_log, legacy.axes = TRUE, lwd = 2, main = "ROC Curves")
+  plot(roc_rf,  add = TRUE, lwd = 2, col = "red")
+  plot(roc_lda, add = TRUE, lwd = 2, col = "blue")
+  legend("bottomright",
+         legend = c(
+           sprintf("Logistic (AUC = %.3f)", pROC::auc(roc_log)),
+           sprintf("Random Forest (AUC = %.3f)", pROC::auc(roc_rf)),
+           sprintf("LDA (AUC = %.3f)", pROC::auc(roc_lda))
+         ),
+         col = c("black","red","blue"), lwd = 2, bty = "n")
+} else {
+  plot.new(); title("ROC curves unavailable (missing y_test or probabilities)")
+}
+```
+
+```{r rf-importance-friend, fig.cap="Random Forest: Top 15 features by Gini importance", echo=FALSE}
+if (exists("rf_fit")) {
+  randomForest::varImpPlot(rf_fit, n.var = 15, main = "Random Forest: Top 15 Features")
+} else {
+  plot.new(); title("RF importance unavailable (rf_fit missing)")
+}
+```
+
+```{r log-or-plot-friend, fig.cap="Logistic Regression: Top odds ratios with 95% CI", echo=FALSE}
+if (exists("log_fit")) {
+  co <- coef(summary(log_fit))
+  OR  <- exp(coef(log_fit))
+  SE  <- co[, "Std. Error"]
+  lower <- exp(coef(log_fit) - 1.96 * SE)
+  upper <- exp(coef(log_fit) + 1.96 * SE)
+  log_or <- data.frame(term = names(OR), OR = OR, CI_low = lower, CI_high = upper)
+  top_or <- head(log_or[order(-abs(log_or$OR - 1)), ], 15)
+  top_or$term <- factor(top_or$term, levels = rev(top_or$term))
+  library(ggplot2)
+  print(
+    ggplot(top_or, aes(x = term, y = OR)) +
+      geom_point() +
+      geom_errorbar(aes(ymin = CI_low, ymax = CI_high), width = 0) +
+      geom_hline(yintercept = 1, linetype = "dashed") +
+      coord_flip() +
+      labs(x = NULL, y = "Odds Ratio (95% CI)")
+  )
+} else {
+  plot.new(); title("OR plot unavailable (log_fit missing)")
+}
+```
+
+
+
+
+
+```{r}
+# Load required library
+library(dplyr)
+
+# Assuming your dataset is called df
+# and the outcome variable is diabetes_binary
+
+csv_path <- "diabetes_binary_5050split_health_indicators_BRFSS2015.csv"
+df <- read.csv(csv_path)
+
+table_b1 <- df %>%
+  group_by(Diabetes_binary) %>%
+  summarise(
+    Mean_BMI = mean(BMI, na.rm = TRUE),
+    SD_BMI   = sd(BMI, na.rm = TRUE),
+    Mean_Age = mean(Age, na.rm = TRUE),
+    SD_Age   = sd(Age, na.rm = TRUE),
+    Mean_GenHlth = mean(GenHlth, na.rm = TRUE),
+    SD_GenHlth   = sd(GenHlth, na.rm = TRUE)
+  )
+
+print(table_b1)
+
+# Add readable labels for 0/1
+library(dplyr)
+
+csv_path <- "diabetes_binary_5050split_health_indicators_BRFSS2015.csv"
+df <- read.csv(csv_path)
+
+table_b1_labeled <- df %>%
+  mutate(Diabetes_label = ifelse(Diabetes_binary == 1, "Diabetes", "No diabetes")) %>%
+  group_by(Diabetes_label) %>%
+  summarise(
+    Mean_BMI = mean(BMI, na.rm = TRUE),
+    SD_BMI   = sd(BMI, na.rm = TRUE),
+    Mean_Age = mean(Age, na.rm = TRUE),
+    SD_Age   = sd(Age, na.rm = TRUE),
+    Mean_GenHlth = mean(GenHlth, na.rm = TRUE),
+    SD_GenHlth   = sd(GenHlth, na.rm = TRUE)
+  )
+
+# Round for export
+table_b1_labeled_round <- table_b1_labeled %>%
+  mutate(across(-Diabetes_label, ~round(., 2)))
+
+write.csv(table_b1_labeled_round, "Table_B1_Descriptives_by_Diabetes.csv", row.names = FALSE)
+
+
+```
+
+
+```{r}
+# Key continuous / ordered predictors
+vars <- c("BMI", "Age", "GenHlth", "MentHlth", "PhysHlth", "Education", "Income")
+
+# Keep only those that actually exist in your df
+vars <- intersect(vars, names(df))
+
+# Build correlation matrix
+table_b2 <- cor(df[vars], use = "pairwise.complete.obs")
+
+# Nicely rounded for the appendix
+print(round(table_b2, 2))
+
+```
+
+
+
+
+
+```{r}
+# 1) Fit your model (or skip if already fitted)
+glm_fit <- glm(Diabetes_binary ~ HighBP + HighChol + BMI + GenHlth + Age + Sex + PhysActivity + Income,
+               data = df, family = binomial())
+
+
+
+
+# 2) Coefficients table (log-odds)
+co <- coef(summary(glm_fit))  # columns: Estimate, Std. Error, z value, Pr(>|z|)
+est <- co[, "Estimate"]
+se  <- co[, "Std. Error"]
+p   <- co[, "Pr(>|z|)"]
+
+# 3) Odds ratios and Wald 95% CI
+OR        <- exp(est)
+CI_lower  <- exp(est - 1.96 * se)
+CI_upper  <- exp(est + 1.96 * se)
+
+# 4) Assemble data frame
+table_c1_base <- data.frame(
+  Predictor  = rownames(co),
+  Estimate_B = round(est, 3),
+  Std_Error  = round(se, 3),
+  Odds_Ratio = round(OR, 3),
+  CI95_Lower = round(CI_lower, 3),
+  CI95_Upper = round(CI_upper, 3),
+  p_value    = signif(p, 3),
+  row.names  = NULL
+)
+
+# 5) View and export
+print(table_c1_base)
+write.csv(table_c1_base, "Table_C1_Logistic_Regression_Coefficients_and_OR.csv", row.names = FALSE)
+
+```
+
+####
+
+
+
+
+```{r}
+# Install once if needed:
+# install.packages(c("dplyr","caret","pROC","yardstick","MASS","randomForest"))
+
+library(dplyr)
+library(caret)
+library(pROC)
+library(yardstick)
+library(MASS)         # lda
+library(randomForest) # randomForest
+
+```
+
+
+```{r}
+set.seed(123)
+
+# Ensure outcome is a factor with positive class = "Yes"
+df <- df %>%
+  mutate(diabetes_factor = factor(ifelse(diabetes_binary == 1, "Yes", "No"),
+                                  levels = c("No","Yes")))
+
+# Simple 70/30 split
+idx <- createDataPartition(df$diabetes_factor, p = 0.7, list = FALSE)
+train <- df[idx, ]
+test  <- df[-idx, ]
+
+# Choose predictors (adjust this list to match your final model spec)
+predictors <- c("HighBP","HighChol","BMI","GenHlth","Age","Sex","PhysActivity","Income")
+form <- as.formula(paste("diabetes_factor ~", paste(predictors, collapse = " + ")))
+
+```
+
+
+```{r}
+
+```# Logistic Regression (glm binomial)
+fit_logit <- glm(form, data = train, family = binomial())
+
+# Random Forest
+fit_rf <- randomForest(form, data = train, ntree = 500, importance = TRUE)
+
+# LDA
+fit_lda <- lda(form, data = train)
+
+
+
