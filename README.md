@@ -1,19 +1,29 @@
-# Diabetes-Risk-Factors-Analysis
-# The Impact of Lifestyle and Socio-Economic Factors on Diabetes Risk
-*A Predictive Analytics Approach using BRFSS 2015*
+# The Impact of Lifestyle & Socio-Economic Factors on Diabetes Risk  
+*A Predictive Analytics Case Study (BRFSS 2015)*
 
-This repository contains my MSBA case study on predicting diabetes using the BRFSS 2015 dataset.
-It compares Logistic Regression, Random Forest, and LDA on a balanced sample and reports
-accuracy, precision/recall/F1, and ROC-AUC.
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)  
+[![Made with R](https://img.shields.io/badge/Made%20with-R-blue)](https://www.r-project.org/)
 
-## Files
-- [docs/](docs/) → reports & write-ups  
-  - [Final Case Study Report (DOCX)](docs/Case_Study_SM_Final.docx)  
-  - [Assignment 3 (HTML)](docs/CaseStudyAssignment3.html)  
-- [outputs/](outputs/) → model results & tables  
-  - [Table B1 – Descriptives by Diabetes](outputs/Table_B1_Descriptives_by_Diabetes.csv)  
-  - [Table C1 – Logistic Regression Coefficients & OR](outputs/Table_C1_Logistic_Regression_Coefficients_and_OR.csv)
+## 📖 Project Summary  
+This repository presents a case study to **predict diabetes status** using **lifestyle**, **health**, and **socio-economic** indicators from the **BRFSS 2015** dataset. Three models (Logistic Regression, Random Forest, LDA) are compared on metrics like accuracy, precision, recall, F1, and ROC-AUC.
 
+## Files & Structure
 
-## Getting Started
-Open the repo, read this README, and see `docs/` for the detailed report.
+| Folder / File | Description |
+|---------------|-------------|
+| `docs/` | Reports and web assets |
+| &nbsp; ├ `Case_Study_SM_Final.docx` | Final written report |
+| &nbsp; └ `CaseStudyAssignment3.html` | HTML version of assignment |
+| `outputs/` | Model outputs, tables, results |
+| &nbsp; ├ `Table_B1_Descriptives_by_Diabetes.csv` | Descriptive stats by diabetes class |
+| &nbsp; └ `Table_C1_Logistic_Regression_Coefficients_and_OR.csv` | Coefficients & odds ratios from logistic model |
+| `README.md` | This file |
+| `.gitignore` | Rules for what to ignore in the repo |
+| `LICENSE` | MIT license (if you add it) |
+
+## Reproduce the Analysis
+
+1. Clone this repository  
+   ```bash
+   git clone https://github.com/ShraddhaMdr/Diabetes-Risk-Factors-Analysis.git
+   cd Diabetes-Risk-Factors-Analysis
