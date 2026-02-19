@@ -1,35 +1,107 @@
-# The Impact of Lifestyle & Socio-Economic Factors on Diabetes Risk  
-*A Predictive Analytics Case Study (BRFSS 2015)*
+# 🩺 Predicting Diabetes Risk Using Lifestyle & Socioeconomic Indicators  
+### A Predictive Analytics Case Study (BRFSS 2015)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)  
-[![Made with R](https://img.shields.io/badge/Made%20with-R-blue)](https://www.r-project.org/)
+**Tools Used:** R | Logistic Regression | Random Forest | LDA | ROC Analysis  
+**License:** MIT  
 
-## Project Summary  
-This repository presents a case study to **predict diabetes status** using **lifestyle**, **health**, and **socio-economic** indicators from the **BRFSS 2015** dataset. Three models (Logistic Regression, Random Forest, LDA) are compared on metrics like accuracy, precision, recall, F1, and ROC-AUC.
-<p align="left">
-  <a href="https://shraddhamdr.github.io/Diabetes-Risk-Factors-Analysis/CaseStudyAssignment3.html">
-    <img alt="View Live Report" src="https://img.shields.io/badge/VIEW%20LIVE%20REPORT-HTML-blue?style=for-the-badge">
-  </a>
-</p>
+---
 
+## 📌 Business Problem
 
-## Files & Structure
+Diabetes is a growing public health challenge in the United States. Early identification of high-risk individuals can significantly improve prevention strategies and reduce long-term healthcare costs.
 
-| Folder / File | Description |
-|---------------|-------------|
-| `docs/` | Reports and web assets |
-| &nbsp; ├ `Case_Study_SM_Final.docx` | Final written report |
-| &nbsp; └ `CaseStudyAssignment3.html` | HTML version of assignment |
-| `outputs/` | Model outputs, tables, results |
-| &nbsp; ├ `Table_B1_Descriptives_by_Diabetes.csv` | Descriptive stats by diabetes class |
-| &nbsp; └ `Table_C1_Logistic_Regression_Coefficients_and_OR.csv` | Coefficients & odds ratios from logistic model |
-| `README.md` | This file |
-| `.gitignore` | Rules for what to ignore in the repo |
-| `LICENSE` | MIT license (if you add it) |
+This project develops predictive models to classify diabetes status using lifestyle, health, and socioeconomic indicators from the Behavioral Risk Factor Surveillance System (BRFSS) 2015 dataset.
 
-## Reproduce the Analysis
+The objective is to:
+- Identify significant risk factors
+- Compare predictive modeling techniques
+- Evaluate model performance for potential screening applications
 
-1. Clone this repository  
-   ```bash
-   git clone https://github.com/ShraddhaMdr/Diabetes-Risk-Factors-Analysis.git
-   cd Diabetes-Risk-Factors-Analysis
+---
+
+## 📊 Dataset
+
+**Source:** CDC Behavioral Risk Factor Surveillance System (BRFSS) 2015  
+
+The dataset includes health-related survey responses from U.S. adults across multiple states.
+
+### Key Variable Categories:
+- Lifestyle factors (physical activity, smoking, diet)
+- Health indicators (BMI, blood pressure)
+- Socioeconomic indicators (income, education)
+- Demographics
+
+**Target Variable:**  
+Binary classification of diabetes status
+
+---
+
+## 🔍 Methodology
+
+1. Data cleaning and preprocessing  
+2. Feature selection and variable encoding  
+3. Train-test split  
+4. Model development:
+   - Logistic Regression  
+   - Random Forest  
+   - Linear Discriminant Analysis (LDA)  
+5. Model evaluation using:
+   - Accuracy  
+   - Precision  
+   - Recall  
+   - F1 Score  
+   - ROC-AUC  
+
+---
+
+## 📈 Model Comparison
+
+The three models were evaluated based on predictive performance and interpretability.
+
+- **Logistic Regression** provided interpretable odds ratios for understanding risk factors.
+- **Random Forest** improved predictive accuracy by capturing nonlinear relationships.
+- **LDA** offered a baseline comparison model.
+
+(You can optionally insert your performance metrics here.)
+
+---
+
+## 🔎 Key Insights
+
+- Higher BMI and physical inactivity were strongly associated with increased diabetes risk.
+- Socioeconomic factors such as income and education showed measurable impact.
+- Random Forest demonstrated stronger classification performance, while Logistic Regression offered clearer interpretability.
+
+---
+
+## 💡 Business & Public Health Implications
+
+- Predictive modeling can support early risk screening initiatives.
+- Healthcare organizations can target high-risk populations for preventive intervention programs.
+- Understanding lifestyle and socioeconomic drivers enables more data-informed public health strategies.
+
+---
+
+## 📂 Repository Structure
+
+```
+docs/          # Reports and HTML outputs
+outputs/       # Model outputs and result tables
+README.md      # Project overview
+LICENSE        # MIT license
+```
+
+---
+
+## 📎 Deliverables
+
+- Reproducible analysis in R  
+- Model comparison results  
+- Logistic regression coefficient table with odds ratios  
+- Final written report (HTML / DOCX)
+
+---
+
+## 📬 Contact
+
+For questions or collaboration opportunities, feel free to connect via LinkedIn or GitHub.
